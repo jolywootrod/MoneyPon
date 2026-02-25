@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>MoneyPon — Pon Lajan Ou</title>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800;900&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.js"></script>
 <style>
 :root{--bg:#051209;--bg2:#081a10;--card:#0d2418;--card2:#112b1e;--green:#00875a;--green2:#00c27a;--gold:#f0b429;--red:#ff4d6d;--blue:#3b82f6;--text:#e8f5ee;--text2:#b8d4c2;--muted:#5a8a6e;--border:rgba(0,194,122,0.08);--border2:rgba(255,255,255,0.06)}
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -540,6 +540,8 @@ select.input-field option{background:var(--card)}
     <div id="admin-agent-applications"><div class="empty-state" style="padding:20px"><div class="empty-title">No pending applications</div></div></div>
     <div class="section-title pad">🔐 Pending Release</div>
     <div id="admin-pending-transactions"><div class="empty-state" style="padding:20px"><div class="empty-title">No transfers awaiting release</div></div></div>
+    <div class="section-title pad">✅ Zelle Sent — Mark Complete</div>
+    <div id="admin-processing-transactions"><div class="empty-state" style="padding:20px"><div class="empty-title">No transfers in processing</div></div></div>
     <div class="section-title pad">👥 All Agents</div>
     <div id="admin-all-agents"><div class="empty-state" style="padding:20px"><div class="empty-title">No agents yet</div></div></div>
     <div class="section-title pad">📋 All Transactions</div>
@@ -815,9 +817,11 @@ async function loadAdminDashboard(){
   const{data:apps}=await sb.from('users').select('*').eq('role','agent_pending');
   const appsEl=document.getElementById('admin-agent-applications');
   appsEl.innerHTML=(!apps||!apps.length)?'<div class="empty-state" style="padding:20px"><div class="empty-title">No pending applications</div></div>':apps.map(a=>`<div class="admin-action-row"><div class="admin-action-info"><div class="admin-action-name">${a.name} <span class="badge badge-muted">Pending</span></div><div class="admin-action-sub">📍 ${a.location||'?'} • 📞 ${a.phone||'?'}</div></div><div class="admin-action-btns"><button class="admin-btn-approve" onclick="approveAgent('${a.id}')">✓ Approve</button><button class="admin-btn-reject" onclick="rejectAgent('${a.id}')">✗ Reject</button></div></div>`).join('');
-  const pendingTxs=(txAll||[]).filter(t=>t.status==='cash_confirmed');
+  const processingTxs=(txAll||[]).filter(t=>t.status==='processing');const pendingTxs=(txAll||[]).filter(t=>t.status==='cash_confirmed');
   const pendEl=document.getElementById('admin-pending-transactions');
   pendEl.innerHTML=!pendingTxs.length?'<div class="empty-state" style="padding:20px"><div class="empty-title">No transfers awaiting release</div></div>':pendingTxs.map(d=>`<div class="admin-action-row"><div class="admin-action-info"><div class="admin-action-name">$${d.amount} → $${(d.receive_amount||d.amount*0.85).toFixed(2)} <span class="badge badge-gold">Cash Confirmed</span></div><div class="admin-action-sub">To: ${d.recipient_name} • ${d.recipient_zelle}</div></div><div class="admin-action-btns"><button class="admin-btn-approve" onclick="openReleaseModal('${d.id}')">Release</button></div></div>`).join('');
+  const procEl=document.getElementById('admin-processing-transactions');
+  procEl.innerHTML=!processingTxs.length?'<div class="empty-state" style="padding:20px"><div class="empty-title">No transfers in processing</div></div>':processingTxs.map(d=>`<div class="admin-action-row"><div class="admin-action-info"><div class="admin-action-name">$${d.amount} → $${(d.receive_amount||d.amount*0.85).toFixed(2)} <span class="badge badge-blue">Zelle Sent ✅</span></div><div class="admin-action-sub">To: ${d.recipient_name} • ${d.recipient_zelle}</div></div><div class="admin-action-btns"><button class="admin-btn-approve" onclick="markComplete('${d.id}')">✅ Mark Done</button></div></div>`).join('');
   const{data:agents}=await sb.from('users').select('*').in('role',['agent','agent_pending']);
   const agentsEl=document.getElementById('admin-all-agents');
   agentsEl.innerHTML=(!agents||!agents.length)?'<div class="empty-state" style="padding:20px"><div class="empty-title">No agents yet</div></div>':agents.map(a=>`<div class="admin-action-row"><div class="admin-action-info"><div class="admin-action-name">${a.name} <span class="badge ${a.status==='active'?'badge-green':a.status==='blocked'?'badge-red':'badge-muted'}">${a.status||a.role}</span></div><div class="admin-action-sub">📍 ${a.location||'?'} • ${a.total_transactions||0} transfers</div></div><div class="admin-action-btns">${a.status==='active'?`<button class="admin-btn-block" onclick="blockAgent('${a.id}')">Block</button>`:''}${a.status==='blocked'?`<button class="admin-btn-approve" onclick="unblockAgent('${a.id}')">Unblock</button>`:''}</div></div>`).join('');
@@ -826,6 +830,8 @@ async function loadAdminDashboard(){
   allTxEl.innerHTML=!sorted.length?'<div class="empty-state" style="padding:20px"><div class="empty-title">No transactions yet</div></div>':sorted.slice(0,20).map(d=>`<div class="admin-action-row"><div class="admin-action-info"><div class="admin-action-name">$${d.amount} <span class="badge ${d.status==='completed'?'badge-green':d.status==='flagged'?'badge-red':'badge-gold'}">${d.status}</span></div><div class="admin-action-sub">From: ${d.sender_name} → To: ${d.recipient_name}</div></div><div class="admin-action-btns"><button class="admin-btn-approve" onclick="viewTransfer('${d.id}')">View</button></div></div>`).join('');
 }
 
+async function markComplete(txId){await sb.from('transactions').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',txId);showToast('✅ Transfer marked complete!');loadAdminDashboard();}
+async function markComplete(txId){await sb.from('transactions').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',txId);showToast('✅ Transfer marked complete!');loadAdminDashboard();}
 async function approveAgent(uid){await sb.from('users').update({role:'agent',status:'active'}).eq('id',uid);showToast('✅ Agent approved!');loadAdminDashboard();}
 async function rejectAgent(uid){await sb.from('users').update({role:'user',status:'rejected'}).eq('id',uid);showToast('Agent rejected');loadAdminDashboard();}
 async function blockAgent(uid){await sb.from('users').update({status:'blocked'}).eq('id',uid);showToast('🚫 Agent blocked');loadAdminDashboard();}
